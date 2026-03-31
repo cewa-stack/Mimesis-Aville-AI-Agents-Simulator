@@ -1,0 +1,54 @@
+# --- UNITY ---
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Mm]emoryCaptures/
+/[Aa]ssets/AssetStoreTools*
+
+# Config
+/[Vv]isualStudioData/
+.vs/
+.vscode/
+*.csproj
+*.sln
+*.suo
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# --- Unity system ---
+/[Aa]ssets/*.unitypackage
+/[Vv]erisonControl.txt
+
+# --- PYTHON ---
+backend/venv/
+backend/__pycache__/
+backend/*.pyc
+backend/*.pyo
+backend/*.pyd
+backend/.env
+backend/.pytest_cache/
+backend/.ipynb_checkpoints/
+
+# --- DATABASE (ChromaDB) ---
+backend/chroma_db/
+chroma_db/
+
+# --- OS ---
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Icon?
+ehthumbs.db
+Thumbs.db
