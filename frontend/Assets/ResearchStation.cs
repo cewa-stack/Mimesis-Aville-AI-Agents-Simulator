@@ -1,6 +1,6 @@
 ﻿using UnityEngine;
 
-public class ResearchStation : MonoBehaviour
+public class ResearchStation : MonoBehaviour // Zostawiamy nazwę klasy, żeby nie psuć referencji, zmieniamy tylko LOGI
 {
     public string currentOccupant = "None";
     public bool isOccupied = false;
@@ -11,7 +11,7 @@ public class ResearchStation : MonoBehaviour
         {
             isOccupied = true;
             currentOccupant = agentName;
-            Debug.Log($"{agentName} started working at the Research Station.");
+            Debug.Log($"<color=yellow>{agentName} started using the workstation.</color>");
             return true;
         }
         return false;
@@ -23,7 +23,7 @@ public class ResearchStation : MonoBehaviour
         {
             isOccupied = false;
             currentOccupant = "None";
-            Debug.Log($"{agentName} left the Research Station.");
+            Debug.Log($"<color=yellow>{agentName} left the workstation.</color>");
         }
     }
 }

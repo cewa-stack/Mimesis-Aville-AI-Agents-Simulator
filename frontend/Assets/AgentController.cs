@@ -1,129 +1,156 @@
 ﻿using UnityEngine;
 using System.Collections.Generic;
+using System.Collections;
 
 public class AgentController : MonoBehaviour
 {
-    [Header("Agent Identity")]
-    public string agentName = "Dr Alan";
+    [Header("Identity & Emotions")]
+    public string agentName = "Alan";
     public List<float> currentPAD = new List<float> { 0.0f, 0.0f, 0.0f };
-    
-    [Header("Stats")]
+
+    [Header("Survival Stats")]
     public float stamina = 100f;
-    public float staminaDrainRate = 1.0f; 
+    public float staminaDrainRate = 0.5f;
     public bool isSleeping = false;
     public bool isWorking = false;
-    private bool isHeadingToBed = false;
+    public bool isHeadingToHouse = false;
+
+    [Header("Visuals")]
+    private SpriteRenderer spriteRenderer;
+    private Animator animator;
+    private Canvas agentCanvas;
 
     [Header("World References")]
-    public Transform myBed; 
-    private ResearchStation targetStation;
+    public Transform myHouse;
+    public ResearchStation currentWorkstation;
+
     private AIBrainClient brainClient;
     private AgentUI agentUI;
-    private AgentWander wander;
+    private AgentWander wanderScript;
 
     void Awake()
     {
+        spriteRenderer = GetComponent<SpriteRenderer>();
+        animator = GetComponent<Animator>();
+        agentCanvas = GetComponentInChildren<Canvas>();
         brainClient = gameObject.AddComponent<AIBrainClient>();
         agentUI = GetComponent<AgentUI>();
-        wander = GetComponent<AgentWander>();
+        wanderScript = GetComponent<AgentWander>();
     }
 
     void Start()
     {
-        Debug.Log($"<color=cyan>[{agentName}] Initialized.</color>");
-        MakeDecision("I just started my shift.");
+        Debug.Log($"<color=cyan>[System] {agentName} joined the island.</color>");
+        MakeDecision("I am starting my day on this island.");
     }
 
     void Update()
     {
-        // LOGIKA SNU
         if (isSleeping)
         {
-            stamina += staminaDrainRate * 15 * Time.deltaTime; // Szybka regeneracja
+            SetAnim(0, 0); // Stój w miejscu podczas snu
+            stamina += staminaDrainRate * 15 * Time.deltaTime;
             if (stamina >= 100f) WakeUp();
             return;
         }
 
-        // LOGIKA CHODZENIA DO ŁÓŻKA
-        if (isHeadingToBed)
+        if (isHeadingToHouse)
         {
-            MoveTowardsBed();
+            // Kontrola ruchu do domu jest wewnątrz tej funkcji (poniżej)
             return;
         }
 
-        // ZUŻYCIE STAMINY
         stamina -= staminaDrainRate * Time.deltaTime;
-        if (stamina <= 0) 
-        {
-            stamina = 0;
-            StartHeadingToBed();
-        }
+        if (stamina <= 0) StartHeadingToHouse();
     }
 
-    void StartHeadingToBed()
+    public void StartHeadingToHouse()
     {
-        if (isHeadingToBed || isSleeping) return;
-        
-        Debug.Log($"<color=orange>[{agentName}] is exhausted. Heading to bed...</color>");
-        isHeadingToBed = true;
+        if (isHeadingToHouse || isSleeping) return;
+
+        isHeadingToHouse = true;
         isWorking = false;
-        if (wander != null) wander.enabled = false;
-        if (targetStation != null) targetStation.Release(agentName);
         
-        if (agentUI != null) agentUI.ShowSpeech("I'm so tired... going to bed.");
+        if (wanderScript != null) wanderScript.StopAllCoroutines();
+        if (wanderScript != null) wanderScript.enabled = false; 
+        
+        if (currentWorkstation != null) currentWorkstation.Release(agentName);
+        if (agentUI != null) agentUI.ShowSpeech("I'm exhausted. Heading home.");
+
+        StartCoroutine(MoveToHouseSequentially());
     }
 
-    void MoveTowardsBed()
+    // Specjalna rutyna idąca do domu bez skosów (naprawia plecy!)
+    IEnumerator MoveToHouseSequentially()
     {
-        if (myBed == null) 
+        if (myHouse == null) { EnterSleepState(); yield break; }
+
+        Vector3 targetPos = myHouse.position;
+
+        // 1. Najpierw wyrównaj w poziomie (X)
+        Vector3 xTarget = new Vector3(targetPos.x, transform.position.y, transform.position.z);
+        while (Vector3.Distance(transform.position, xTarget) > 0.1f)
         {
-            Debug.LogError($"[{agentName}] No Bed assigned in Inspector!");
-            EnterSleepState(); // Teleport if no bed found to avoid stuck state
-            return;
+            float dirX = xTarget.x > transform.position.x ? 1 : -1;
+            SetAnim(dirX, 0); // Y musi być 0 podczas ruchu w bok!
+            spriteRenderer.flipX = (dirX < 0);
+            transform.position = Vector3.MoveTowards(transform.position, xTarget, 2.5f * Time.deltaTime);
+            yield return null;
         }
 
-        float step = 2.0f * Time.deltaTime;
-        transform.position = Vector2.MoveTowards(transform.position, myBed.position, step);
-
-        if (Vector2.Distance(transform.position, myBed.position) < 0.3f)
+        // 2. Potem wyrównaj w pionie (Y)
+        Vector3 yTarget = new Vector3(transform.position.x, targetPos.y, transform.position.z);
+        while (Vector3.Distance(transform.position, yTarget) > 0.1f)
         {
-            EnterSleepState();
+            float dirY = yTarget.y > transform.position.y ? 1 : -1;
+            SetAnim(0, dirY); // X musi być 0 podczas ruchu góra/dół!
+            transform.position = Vector3.MoveTowards(transform.position, yTarget, 2.5f * Time.deltaTime);
+            yield return null;
         }
+
+        EnterSleepState();
     }
 
-    void EnterSleepState()
+    private void EnterSleepState()
     {
-        isHeadingToBed = false;
+        isHeadingToHouse = false;
         isSleeping = true;
-        Debug.Log($"<color=blue>[{agentName}] is now sleeping and reflecting.</color>");
+        SetAnim(0, 0);
+
+        if (spriteRenderer) spriteRenderer.enabled = false;
+        if (agentCanvas) agentCanvas.enabled = false;
+
+        Debug.Log($"<color=blue>[{agentName}] is now sleeping.</color>");
         brainClient.SendReflection(agentName, currentPAD);
     }
 
-// W AgentController.cs
     public void WakeUp()
     {
         isSleeping = false;
-        isHeadingToBed = false;
+        isHeadingToHouse = false;
         stamina = 100f;
-        if (wander != null) wander.enabled = true;
-    
-        Debug.Log($"<color=green>[{agentName}] woke up! Current Mood: P:{currentPAD[0]}</color>");
-    
-        // Agent po przebudzeniu od razu ocenia swój stan
-        MakeDecision("I just woke up. I'm thinking about my dreams and how I feel today.");
+
+        if (spriteRenderer) spriteRenderer.enabled = true;
+        if (agentCanvas) agentCanvas.enabled = true;
+
+        transform.position += new Vector3(0, -0.8f, 0); // Wyjście przed dom
+
+        if (wanderScript != null) wanderScript.enabled = true; 
+        
+        Debug.Log($"<color=green>[{agentName}] woke up!</color>");
+        MakeDecision("I just woke up. Time to explore.");
     }
 
     public void MakeDecision(string observation)
     {
-        // Blokada: śpiący lub idący do łóżka agent nie podejmuje nowych decyzji społecznych
-        if (isSleeping || isHeadingToBed) return;
+        if (isSleeping || isHeadingToHouse) return;
 
         EnvironmentObservation data = new EnvironmentObservation
         {
             agent_name = agentName,
             current_emotion = currentPAD,
             observation = observation,
-            stamina = stamina 
+            stamina = stamina
         };
 
         brainClient.SendObservation(data, ProcessResponse);
@@ -132,10 +159,6 @@ public class AgentController : MonoBehaviour
     void ProcessResponse(AgentResponse response)
     {
         currentPAD = response.emotion_pad;
-        
-        // DEBUG LOG: Zobaczysz w konsoli co AI kazało mu powiedzieć
-        Debug.Log($"<color=white>[{agentName}] Thought: {response.internal_thought}</color>");
-        Debug.Log($"<color=yellow>[{agentName}] Dialogue: {response.dialogue}</color>");
 
         if (agentUI != null)
         {
@@ -144,35 +167,68 @@ public class AgentController : MonoBehaviour
             {
                 agentUI.ShowSpeech(response.dialogue);
                 BroadcastSpeech(response.dialogue);
+                
+                // Zatrzymaj wander na czas czytania dymka
+                if (wanderScript != null) wanderScript.StopAllMovement();
+                StartCoroutine(StopToTalk(5f));
             }
         }
         ExecuteAction(response.action);
     }
 
+    IEnumerator StopToTalk(float duration)
+    {
+        if (wanderScript != null) wanderScript.enabled = false;
+        SetAnim(0, 0);
+        yield return new WaitForSeconds(duration);
+        if (!isSleeping && !isHeadingToHouse && !isWorking)
+        {
+            if (wanderScript != null) wanderScript.enabled = true;
+        }
+    }
+
     void ExecuteAction(string action)
     {
-        if (isSleeping || isHeadingToBed) return;
+        if (isSleeping || isHeadingToHouse) return;
 
-        if (action == "WORK" && stamina > 10f)
+        if (action == "WORK" && stamina > 15f)
         {
-            if (targetStation != null && targetStation.TryOccupy(agentName))
+            if (currentWorkstation != null && currentWorkstation.TryOccupy(agentName))
             {
                 isWorking = true;
-                if (wander != null) wander.enabled = false;
+                if (wanderScript != null) wanderScript.enabled = false;
+                SetAnim(0, 0);
             }
         }
         else
         {
             if (isWorking) StopWorking();
-            // Movement is handled by AgentWander.cs
         }
     }
 
     void StopWorking()
     {
         isWorking = false;
-        if (targetStation != null) targetStation.Release(agentName);
-        if (wander != null) wander.enabled = true;
+        if (currentWorkstation != null) currentWorkstation.Release(agentName);
+        if (wanderScript != null) wanderScript.enabled = true;
+    }
+
+    void SetAnim(float x, float y)
+    {
+        if (animator == null) return;
+        animator.SetFloat("MoveX", x);
+        animator.SetFloat("MoveY", y);
+    }
+
+    void BroadcastSpeech(string text)
+    {
+        Collider2D[] nearby = Physics2D.OverlapCircleAll(transform.position, 5f);
+        foreach (var col in nearby)
+        {
+            if (col.gameObject == gameObject) continue;
+            AgentPerception other = col.GetComponent<AgentPerception>();
+            if (other != null) other.ReceiveSpeech(agentName, text);
+        }
     }
 
     public void StartReflection()
@@ -181,40 +237,14 @@ public class AgentController : MonoBehaviour
         brainClient.SendReflection(agentName, currentPAD);
     }
 
-    void BroadcastSpeech(string text)
-    {
-        // Szukamy innych agentów w promieniu 4 jednostek
-        Collider2D[] nearby = Physics2D.OverlapCircleAll(transform.position, 4f);
-        foreach (var col in nearby)
-        {
-            if (col.gameObject == gameObject) continue;
-            AgentPerception other = col.GetComponent<AgentPerception>();
-            if (other != null)
-            {
-                other.ReceiveSpeech(agentName, text);
-            }
-        }
-    }
-
     private void OnTriggerEnter2D(Collider2D other)
     {
-        if (isSleeping || isHeadingToBed) return;
-
-        // Wykrywanie stacji badawczej
+        if (isSleeping || isHeadingToHouse) return;
         ResearchStation station = other.GetComponent<ResearchStation>();
         if (station != null)
         {
-            targetStation = station;
-            MakeDecision("I am at the Research Station. I should work.");
-        }
-    }
-
-    private void OnTriggerExit2D(Collider2D other)
-    {
-        if (other.GetComponent<ResearchStation>() != null)
-        {
-            StopWorking();
-            targetStation = null;
+            currentWorkstation = station;
+            MakeDecision("I am near the island community workstation.");
         }
     }
 }
