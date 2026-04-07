@@ -5,17 +5,13 @@ using System.Collections.Generic;
 
 public class AgentWander : MonoBehaviour
 {
-    public float moveSpeed = 2f;
+    public float moveSpeed = 3f;
     public Tilemap navigationMap;
     
-    [Header("Safety Filter")]
-    public float maxDistanceAllowed = 15f; // Maksymalny dystans od środka (0,0)
-
     private Animator animator;
     private SpriteRenderer spriteRenderer;
-    private bool isMoving = false;
-    private List<Vector3Int> walkableTiles = new List<Vector3Int>();
-    private Vector3 currentTarget;
+    public bool isMoving = false;
+    private HashSet<Vector3Int> walkableTiles = new HashSet<Vector3Int>();
 
     void Start()
     {
@@ -27,26 +23,12 @@ public class AgentWander : MonoBehaviour
 
     void InitializeNavigation()
     {
-        if (navigationMap != null)
+        if (navigationMap == null) return;
+        walkableTiles.Clear();
+        navigationMap.CompressBounds();
+        foreach (var pos in navigationMap.cellBounds.allPositionsWithin)
         {
-            walkableTiles.Clear();
-            navigationMap.CompressBounds();
-            BoundsInt bounds = navigationMap.cellBounds;
-
-            foreach (var pos in bounds.allPositionsWithin)
-            {
-                if (navigationMap.HasTile(pos))
-                {
-                    // FILTR: Dodaj tylko kafelki, które są blisko środka wyspy
-                    // Zapobiega to ucieczkom do "duchów" na krawędziach
-                    Vector3 worldPos = navigationMap.GetCellCenterWorld(pos);
-                    if (Vector3.Distance(worldPos, Vector3.zero) < maxDistanceAllowed)
-                    {
-                        walkableTiles.Add(pos);
-                    }
-                }
-            }
-            Debug.Log($"<color=orange>[Wander] {gameObject.name} wczytał {walkableTiles.Count} kafelków wyspy.</color>");
+            if (navigationMap.HasTile(pos)) walkableTiles.Add(pos);
         }
     }
 
@@ -56,65 +38,81 @@ public class AgentWander : MonoBehaviour
         {
             if (!isMoving && walkableTiles.Count > 0)
             {
-                yield return new WaitForSeconds(Random.Range(3f, 7f));
-                
-                Vector3Int targetTile = walkableTiles[Random.Range(0, walkableTiles.Count)];
-                currentTarget = navigationMap.GetCellCenterWorld(targetTile);
-                
-                yield return StartCoroutine(MoveSequentially(currentTarget));
+                yield return new WaitForSeconds(Random.Range(2f, 5f));
+
+                Vector3Int currentTile = navigationMap.WorldToCell(transform.position);
+                Vector3Int targetTile = currentTile;
+
+                // LOGIKA DALEKIEJ EKSPLORACJI (szukamy celu min 10 kratek dalej)
+                List<Vector3Int> allTiles = new List<Vector3Int>(walkableTiles);
+                int attempts = 0;
+                while (attempts < 100)
+                {
+                    Vector3Int candidate = allTiles[Random.Range(0, allTiles.Count)];
+                    if (Vector3Int.Distance(currentTile, candidate) > 10)
+                    {
+                        targetTile = candidate;
+                        break;
+                    }
+                    attempts++;
+                }
+
+                yield return StartCoroutine(SmartMove(targetTile));
             }
             yield return null;
         }
     }
 
-    IEnumerator MoveSequentially(Vector3 target)
+    IEnumerator SmartMove(Vector3Int targetTile)
     {
         isMoving = true;
-        // 1. Ruch X
-        Vector3 xTarget = new Vector3(target.x, transform.position.y, transform.position.z);
-        if (Vector3.Distance(transform.position, xTarget) > 0.1f)
-            yield return StartCoroutine(Step(xTarget, true));
+        while (true)
+        {
+            Vector3Int currentPos = navigationMap.WorldToCell(transform.position);
+            if (currentPos == targetTile) break;
 
-        // 2. Ruch Y
-        Vector3 yTarget = new Vector3(transform.position.x, target.y, transform.position.z);
-        if (Vector3.Distance(transform.position, yTarget) > 0.1f)
-            yield return StartCoroutine(Step(yTarget, false));
+            Vector3Int nextStep = currentPos;
+            if (currentPos.x != targetTile.x) nextStep.x += (targetTile.x > currentPos.x) ? 1 : -1;
+            else if (currentPos.y != targetTile.y) nextStep.y += (targetTile.y > currentPos.y) ? 1 : -1;
 
-        SetAnim(0, 0); 
+            if (walkableTiles.Contains(nextStep))
+            {
+                Vector3 nextWorldPos = navigationMap.GetCellCenterWorld(nextStep);
+                yield return StartCoroutine(MoveToTile(nextWorldPos));
+            }
+            else break; // Blokada (mur)
+        }
+        SetAnim(0, 0);
         isMoving = false;
     }
 
-    IEnumerator Step(Vector3 destination, bool isHorizontal)
+    IEnumerator MoveToTile(Vector3 destination)
     {
-        while (Vector3.Distance(transform.position, destination) > 0.05f)
+        while (Vector3.Distance(transform.position, destination) > 0.02f)
         {
             Vector3 dir = (destination - transform.position).normalized;
-            if (isHorizontal) {
-                SetAnim(dir.x > 0 ? 1 : -1, 0);
-                spriteRenderer.flipX = (dir.x < 0);
-            } else {
-                SetAnim(0, dir.y > 0 ? 1 : -1);
-            }
+            if (Mathf.Abs(dir.x) > Mathf.Abs(dir.y)) { SetAnim(dir.x > 0 ? 1 : -1, 0); spriteRenderer.flipX = (dir.x < 0); }
+            else { SetAnim(0, dir.y > 0 ? 1 : -1); }
             transform.position = Vector3.MoveTowards(transform.position, destination, moveSpeed * Time.deltaTime);
             yield return null;
         }
         transform.position = destination;
     }
 
-    void SetAnim(float x, float y) {
-        if (animator) { animator.SetFloat("MoveX", x); animator.SetFloat("MoveY", y); }
-    }
+    void SetAnim(float x, float y) { if (animator) { animator.SetFloat("MoveX", x); animator.SetFloat("MoveY", y); } }
 
-    public void StopAllMovement() {
+    public void StopAllMovement()
+    {
         StopAllCoroutines();
         SetAnim(0, 0);
         isMoving = false;
         StartCoroutine(WanderRoutine());
     }
 
-    // Narysuje zielone kółko w edytorze pokazujące bezpieczną strefę
-    void OnDrawGizmosSelected() {
-        Gizmos.color = Color.green;
-        Gizmos.DrawWireSphere(Vector3.zero, maxDistanceAllowed);
+    void OnDrawGizmos()
+    {
+        if (navigationMap == null) return;
+        Gizmos.color = new Color(0, 1, 1, 0.2f);
+        foreach (var pos in walkableTiles) Gizmos.DrawCube(navigationMap.GetCellCenterWorld(pos), Vector3.one * 0.5f);
     }
 }

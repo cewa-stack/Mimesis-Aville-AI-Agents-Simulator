@@ -6,26 +6,13 @@ using System.Collections;
 public class AgentUI : MonoBehaviour
 {
     public TextMeshProUGUI speechText;
-    public TextMeshProUGUI statusText;
-    public GameObject bubbleObject; // Przeciągnij tutaj "BubbleBackground"
+    public GameObject bubbleObject; // To jest Twoje tło (Image)
     public float displayDuration = 5f;
 
-    void Start()
+    void Awake()
     {
+        // Ukryj dymek natychmiast przy starcie gry
         if (bubbleObject != null) bubbleObject.SetActive(false);
-    }
-
-    public void UpdateStatus(float p, float a, float d)
-    {
-        if (statusText == null) return;
-        
-        string mood = "NEUTRAL";
-        if (p > 0.3f) mood = "HAPPY";
-        if (p < -0.3f) mood = "UPSET";
-        if (p < -0.6f) mood = "ANGRY";
-
-        statusText.text = $"[{mood}]";
-        statusText.color = p >= 0 ? Color.green : Color.red;
     }
 
     public void ShowSpeech(string text)
@@ -36,14 +23,27 @@ public class AgentUI : MonoBehaviour
         StartCoroutine(DisplayRoutine(text));
     }
 
+    public void HideBubble()
+    {
+        StopAllCoroutines();
+        if (bubbleObject != null) bubbleObject.SetActive(false);
+        if (speechText != null) speechText.text = "";
+    }
+
     private IEnumerator DisplayRoutine(string text)
     {
         speechText.text = text;
-        bubbleObject.SetActive(true); // Pokaż dymek
+        bubbleObject.SetActive(true);
+
+        // Wymuszenie odświeżenia układu
+        LayoutRebuilder.ForceRebuildLayoutImmediate(bubbleObject.GetComponent<RectTransform>());
 
         yield return new WaitForSeconds(displayDuration);
 
-        bubbleObject.SetActive(false); // Ukryj dymek
+        bubbleObject.SetActive(false);
         speechText.text = "";
     }
+
+    // Usunięto UpdateStatus, zgodnie z Twoją prośbą (będzie w panelu agenta)
+    public void UpdateStatus(float p, float a, float d) { }
 }

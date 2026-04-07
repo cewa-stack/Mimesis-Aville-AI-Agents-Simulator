@@ -6,52 +6,46 @@ using UnityEngine.Networking;
 
 public class AIBrainClient : MonoBehaviour
 {
-    // Używamy 127.0.0.1 zamiast localhost dla lepszej stabilności na Windows
     private string baseUrl = "http://127.0.0.1:8000";
 
     public delegate void OnDecisionReceived(AgentResponse response);
+    public delegate void OnMemoriesReceived(List<MemoryEntry> memories);
 
-    // --- GŁÓWNA DECYZJA AGENTA ---
     public void SendObservation(EnvironmentObservation observation, OnDecisionReceived callback)
     {
         StartCoroutine(PostObservation(observation, callback));
     }
 
-    private IEnumerator PostObservation(EnvironmentObservation observation, OnDecisionReceived callback)
+    private IEnumerator PostObservation(EnvironmentObservation obs, OnDecisionReceived callback)
     {
-        string json = JsonUtility.ToJson(observation);
-        byte[] bodyRaw = Encoding.UTF8.GetBytes(json);
+        string json = JsonUtility.ToJson(obs);
+        UnityWebRequest req = new UnityWebRequest($"{baseUrl}/agent/decide", "POST");
+        byte[] body = Encoding.UTF8.GetBytes(json);
+        req.uploadHandler = new UploadHandlerRaw(body);
+        req.downloadHandler = new DownloadHandlerBuffer();
+        req.SetRequestHeader("Content-Type", "application/json");
+        req.timeout = 60;
+        yield return req.SendWebRequest();
 
-        UnityWebRequest request = new UnityWebRequest($"{baseUrl}/agent/decide", "POST");
-        request.uploadHandler = new UploadHandlerRaw(bodyRaw);
-        request.downloadHandler = new DownloadHandlerBuffer();
-        request.SetRequestHeader("Content-Type", "application/json");
-
-        // KLUCZOWE POPRAWKI:
-        request.timeout = 60; // Dajemy lokalnemu AI do 60 sekund na odpowiedź
-        
-        yield return request.SendWebRequest();
-
-        if (request.result == UnityWebRequest.Result.Success)
-        {
-            try
-            {
-                AgentResponse response = JsonUtility.FromJson<AgentResponse>(request.downloadHandler.text);
-                callback?.Invoke(response);
-            }
-            catch (System.Exception e)
-            {
-                Debug.LogError($"[BrainClient] Błąd parsowania JSON: {e.Message}");
-            }
-        }
+        if (req.result == UnityWebRequest.Result.Success)
+            callback?.Invoke(JsonUtility.FromJson<AgentResponse>(req.downloadHandler.text));
         else
-        {
-            // Szczegółowy log błędu sieciowego
-            Debug.LogError($"[BrainClient] Network Error: {request.error} | URL: {request.url} | Code: {request.responseCode}");
-        }
+            callback?.Invoke(new AgentResponse { action = "IDLE", internal_thought = "Offline" });
     }
 
-    // --- CYKL REFLEKSJI (SEN) ---
+    public void GetMemories(string agentName, OnMemoriesReceived callback)
+    {
+        StartCoroutine(FetchMemories(agentName, callback));
+    }
+
+    private IEnumerator FetchMemories(string name, OnMemoriesReceived callback)
+    {
+        UnityWebRequest req = UnityWebRequest.Get($"{baseUrl}/agent/{name}/memories");
+        yield return req.SendWebRequest();
+        if (req.result == UnityWebRequest.Result.Success)
+            callback?.Invoke(JsonUtility.FromJson<MemoryListResponse>(req.downloadHandler.text).memories);
+    }
+
     public void SendReflection(string agentName, List<float> currentEmotion)
     {
         StartCoroutine(PostReflection(agentName, currentEmotion));
@@ -59,30 +53,15 @@ public class AIBrainClient : MonoBehaviour
 
     private IEnumerator PostReflection(string agentName, List<float> emotion)
     {
-        // Ręczne budowanie JSONa dla pewności formatowania liczb float (kropka zamiast przecinka)
         string emotionJson = $"[{emotion[0].ToString(System.Globalization.CultureInfo.InvariantCulture)}, " +
                              $"{emotion[1].ToString(System.Globalization.CultureInfo.InvariantCulture)}, " +
                              $"{emotion[2].ToString(System.Globalization.CultureInfo.InvariantCulture)}]";
-        
         string json = $"{{\"agent_name\":\"{agentName}\", \"current_emotion\":{emotionJson}}}";
-        byte[] bodyRaw = Encoding.UTF8.GetBytes(json);
-
-        UnityWebRequest request = new UnityWebRequest($"{baseUrl}/agent/reflect", "POST");
-        request.uploadHandler = new UploadHandlerRaw(bodyRaw);
-        request.downloadHandler = new DownloadHandlerBuffer();
-        request.SetRequestHeader("Content-Type", "application/json");
-        
-        request.timeout = 90; // Refleksja (sen) trwa zazwyczaj dłużej, dajemy 90 sekund
-
-        yield return request.SendWebRequest();
-
-        if (request.result == UnityWebRequest.Result.Success)
-        {
-            Debug.Log($"<color=blue>[BrainClient] Reflection for {agentName} completed successfully.</color>");
-        }
-        else
-        {
-            Debug.LogError($"[BrainClient] Reflection Error: {request.error} | Code: {request.responseCode}");
-        }
+        UnityWebRequest req = new UnityWebRequest($"{baseUrl}/agent/reflect", "POST");
+        byte[] body = Encoding.UTF8.GetBytes(json);
+        req.uploadHandler = new UploadHandlerRaw(body);
+        req.downloadHandler = new DownloadHandlerBuffer();
+        req.SetRequestHeader("Content-Type", "application/json");
+        yield return req.SendWebRequest();
     }
 }

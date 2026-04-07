@@ -7,10 +7,11 @@ public class AgentController : MonoBehaviour
     [Header("Identity & Emotions")]
     public string agentName = "Alan";
     public List<float> currentPAD = new List<float> { 0.0f, 0.0f, 0.0f };
+    public string lastInternalThought = "Just arrived...";
 
     [Header("Survival Stats")]
     public float stamina = 100f;
-    public float staminaDrainRate = 0.5f;
+    public float staminaDrainRate = 0.05f;
     public bool isSleeping = false;
     public bool isWorking = false;
     public bool isHeadingToHouse = false;
@@ -30,40 +31,92 @@ public class AgentController : MonoBehaviour
 
     void Awake()
     {
+        // Inicjalizacja komponentów
         spriteRenderer = GetComponent<SpriteRenderer>();
         animator = GetComponent<Animator>();
         agentCanvas = GetComponentInChildren<Canvas>();
         brainClient = gameObject.AddComponent<AIBrainClient>();
         agentUI = GetComponent<AgentUI>();
         wanderScript = GetComponent<AgentWander>();
+
+        // Upewnij się, że lista emocji nie jest pusta na starcie
+        if (currentPAD == null || currentPAD.Count < 3)
+        {
+            currentPAD = new List<float> { 0.0f, 0.0f, 0.0f };
+        }
     }
 
     void Start()
     {
-        Debug.Log($"<color=cyan>[System] {agentName} joined the island.</color>");
-        MakeDecision("I am starting my day on this island.");
+        LoadState(); // Wczytaj poprzedni stan z pamięci
+        InvokeRepeating("SaveState", 5f, 5f); // Auto-zapis co 5 sekund
+        
+        Debug.Log($"<color=cyan>[System] {agentName} is ready.</color>");
+        MakeDecision("I am continuing my life on this island.");
+    }
+
+    void OnApplicationQuit()
+    {
+        SaveState(); // Zapisz przy wyjściu
+    }
+
+    // --- SYSTEM ZAPISU (PERSISTENCE) ---
+    public void SaveState()
+    {
+        if (string.IsNullOrEmpty(agentName)) return;
+
+        PlayerPrefs.SetFloat(agentName + "_PosX", transform.position.x);
+        PlayerPrefs.SetFloat(agentName + "_PosY", transform.position.y);
+        PlayerPrefs.SetFloat(agentName + "_Stamina", stamina);
+
+        if (currentPAD != null && currentPAD.Count >= 3)
+        {
+            PlayerPrefs.SetFloat(agentName + "_P", currentPAD[0]);
+            PlayerPrefs.SetFloat(agentName + "_A", currentPAD[1]);
+            PlayerPrefs.SetFloat(agentName + "_D", currentPAD[2]);
+        }
+        PlayerPrefs.Save();
+    }
+
+    public void LoadState()
+    {
+        if (PlayerPrefs.HasKey(agentName + "_PosX"))
+        {
+            float x = PlayerPrefs.GetFloat(agentName + "_PosX");
+            float y = PlayerPrefs.GetFloat(agentName + "_PosY");
+            transform.position = new Vector3(x, y, 0);
+            stamina = PlayerPrefs.GetFloat(agentName + "_Stamina");
+            
+            currentPAD[0] = PlayerPrefs.GetFloat(agentName + "_P");
+            currentPAD[1] = PlayerPrefs.GetFloat(agentName + "_A");
+            currentPAD[2] = PlayerPrefs.GetFloat(agentName + "_D");
+            
+            Debug.Log($"<color=yellow>[Load] {agentName} restored at {transform.position}</color>");
+        }
     }
 
     void Update()
     {
         if (isSleeping)
         {
-            SetAnim(0, 0); // Stój w miejscu podczas snu
-            stamina += staminaDrainRate * 15 * Time.deltaTime;
+            SetAnim(0, 0);
+            stamina += staminaDrainRate * 15 * Time.deltaTime; // Szybka regeneracja
             if (stamina >= 100f) WakeUp();
             return;
         }
 
-        if (isHeadingToHouse)
-        {
-            // Kontrola ruchu do domu jest wewnątrz tej funkcji (poniżej)
-            return;
-        }
+        if (isHeadingToHouse) return;
 
+        // Zużycie energii
         stamina -= staminaDrainRate * Time.deltaTime;
-        if (stamina <= 0) StartHeadingToHouse();
+        if (stamina <= 0) 
+        {
+            stamina = 0;
+            StartHeadingToHouse();
+        }
     }
 
+    // --- CYKL ŻYCIA ---
     public void StartHeadingToHouse()
     {
         if (isHeadingToHouse || isSleeping) return;
@@ -71,8 +124,11 @@ public class AgentController : MonoBehaviour
         isHeadingToHouse = true;
         isWorking = false;
         
-        if (wanderScript != null) wanderScript.StopAllCoroutines();
-        if (wanderScript != null) wanderScript.enabled = false; 
+        if (wanderScript != null) 
+        {
+            wanderScript.StopAllCoroutines();
+            wanderScript.enabled = false; 
+        }
         
         if (currentWorkstation != null) currentWorkstation.Release(agentName);
         if (agentUI != null) agentUI.ShowSpeech("I'm exhausted. Heading home.");
@@ -80,34 +136,29 @@ public class AgentController : MonoBehaviour
         StartCoroutine(MoveToHouseSequentially());
     }
 
-    // Specjalna rutyna idąca do domu bez skosów (naprawia plecy!)
     IEnumerator MoveToHouseSequentially()
     {
         if (myHouse == null) { EnterSleepState(); yield break; }
-
         Vector3 targetPos = myHouse.position;
 
-        // 1. Najpierw wyrównaj w poziomie (X)
-        Vector3 xTarget = new Vector3(targetPos.x, transform.position.y, transform.position.z);
+        // Najpierw X
+        Vector3 xTarget = new Vector3(targetPos.x, transform.position.y, 0);
         while (Vector3.Distance(transform.position, xTarget) > 0.1f)
         {
-            float dirX = xTarget.x > transform.position.x ? 1 : -1;
-            SetAnim(dirX, 0); // Y musi być 0 podczas ruchu w bok!
-            spriteRenderer.flipX = (dirX < 0);
+            float d = xTarget.x > transform.position.x ? 1 : -1;
+            SetAnim(d, 0); spriteRenderer.flipX = (d < 0);
             transform.position = Vector3.MoveTowards(transform.position, xTarget, 2.5f * Time.deltaTime);
             yield return null;
         }
-
-        // 2. Potem wyrównaj w pionie (Y)
-        Vector3 yTarget = new Vector3(transform.position.x, targetPos.y, transform.position.z);
+        // Potem Y
+        Vector3 yTarget = new Vector3(transform.position.x, targetPos.y, 0);
         while (Vector3.Distance(transform.position, yTarget) > 0.1f)
         {
-            float dirY = yTarget.y > transform.position.y ? 1 : -1;
-            SetAnim(0, dirY); // X musi być 0 podczas ruchu góra/dół!
+            float d = yTarget.y > transform.position.y ? 1 : -1;
+            SetAnim(0, d);
             transform.position = Vector3.MoveTowards(transform.position, yTarget, 2.5f * Time.deltaTime);
             yield return null;
         }
-
         EnterSleepState();
     }
 
@@ -128,19 +179,22 @@ public class AgentController : MonoBehaviour
     {
         isSleeping = false;
         isHeadingToHouse = false;
+        isWorking = false;
         stamina = 100f;
 
         if (spriteRenderer) spriteRenderer.enabled = true;
         if (agentCanvas) agentCanvas.enabled = true;
+        if (agentUI != null) agentUI.HideBubble(); // Schowaj dymki po wyjściu
 
-        transform.position += new Vector3(0, -0.8f, 0); // Wyjście przed dom
+        transform.position += new Vector3(0, -1.2f, 0); // Wyjdź przed dom
 
-        if (wanderScript != null) wanderScript.enabled = true; 
+        if (wanderScript != null) { wanderScript.enabled = true; wanderScript.StopAllMovement(); }
         
-        Debug.Log($"<color=green>[{agentName}] woke up!</color>");
-        MakeDecision("I just woke up. Time to explore.");
+        Debug.Log($"<color=green>[{agentName}] woke up refreshed!</color>");
+        MakeDecision("I just woke up.");
     }
 
+    // --- KOMUNIKACJA Z AI ---
     public void MakeDecision(string observation)
     {
         if (isSleeping || isHeadingToHouse) return;
@@ -158,22 +212,54 @@ public class AgentController : MonoBehaviour
 
     void ProcessResponse(AgentResponse response)
     {
+        if (response == null) return;
+        
         currentPAD = response.emotion_pad;
+        lastInternalThought = response.internal_thought;
 
         if (agentUI != null)
         {
-            agentUI.UpdateStatus(currentPAD[0], currentPAD[1], currentPAD[2]);
             if (!string.IsNullOrEmpty(response.dialogue))
             {
                 agentUI.ShowSpeech(response.dialogue);
                 BroadcastSpeech(response.dialogue);
-                
-                // Zatrzymaj wander na czas czytania dymka
                 if (wanderScript != null) wanderScript.StopAllMovement();
                 StartCoroutine(StopToTalk(5f));
             }
         }
-        ExecuteAction(response.action);
+
+        // Obsługa akcji EXPLORE z koordynatami
+        if (response.action == "EXPLORE" && response.target_location != null && response.target_location.Count >= 2)
+        {
+            Vector3 target = new Vector3(response.target_location[0], response.target_location[1], 0);
+            if (wanderScript != null) wanderScript.StopAllMovement();
+            StartCoroutine(MoveSequentially(target, false));
+        }
+        else
+        {
+            ExecuteAction(response.action);
+        }
+    }
+
+    IEnumerator MoveSequentially(Vector3 target, bool isHome)
+    {
+        Vector3 xTarget = new Vector3(target.x, transform.position.y, 0);
+        while (Vector3.Distance(transform.position, xTarget) > 0.1f)
+        {
+            float d = xTarget.x > transform.position.x ? 1 : -1;
+            SetAnim(d, 0); spriteRenderer.flipX = d < 0;
+            transform.position = Vector3.MoveTowards(transform.position, xTarget, 2.5f * Time.deltaTime);
+            yield return null;
+        }
+        Vector3 yTarget = new Vector3(transform.position.x, target.y, 0);
+        while (Vector3.Distance(transform.position, yTarget) > 0.1f)
+        {
+            float d = yTarget.y > transform.position.y ? 1 : -1;
+            SetAnim(0, d);
+            transform.position = Vector3.MoveTowards(transform.position, yTarget, 2.5f * Time.deltaTime);
+            yield return null;
+        }
+        if (isHome) EnterSleepState();
     }
 
     IEnumerator StopToTalk(float duration)
@@ -189,8 +275,6 @@ public class AgentController : MonoBehaviour
 
     void ExecuteAction(string action)
     {
-        if (isSleeping || isHeadingToHouse) return;
-
         if (action == "WORK" && stamina > 15f)
         {
             if (currentWorkstation != null && currentWorkstation.TryOccupy(agentName))
@@ -200,10 +284,7 @@ public class AgentController : MonoBehaviour
                 SetAnim(0, 0);
             }
         }
-        else
-        {
-            if (isWorking) StopWorking();
-        }
+        else if (isWorking) StopWorking();
     }
 
     void StopWorking()
@@ -215,14 +296,16 @@ public class AgentController : MonoBehaviour
 
     void SetAnim(float x, float y)
     {
-        if (animator == null) return;
-        animator.SetFloat("MoveX", x);
-        animator.SetFloat("MoveY", y);
+        if (animator != null)
+        {
+            animator.SetFloat("MoveX", x);
+            animator.SetFloat("MoveY", y);
+        }
     }
 
     void BroadcastSpeech(string text)
     {
-        Collider2D[] nearby = Physics2D.OverlapCircleAll(transform.position, 5f);
+        Collider2D[] nearby = Physics2D.OverlapCircleAll(transform.position, 6f);
         foreach (var col in nearby)
         {
             if (col.gameObject == gameObject) continue;
@@ -244,7 +327,7 @@ public class AgentController : MonoBehaviour
         if (station != null)
         {
             currentWorkstation = station;
-            MakeDecision("I am near the island community workstation.");
+            MakeDecision("I am near the workstation.");
         }
     }
 }
